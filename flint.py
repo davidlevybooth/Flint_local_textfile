@@ -2,45 +2,6 @@
 # coding: utf-8
 
 # ---------------------------------------------------------------------------------------------------------------------
-#
-#                                       Florida International University
-#
-#   This software is a "Camilo Valdes Work" under the terms of the United States Copyright Act.
-#   Please cite the author(s) in any work or product based on this material.
-#
-#   OBJECTIVE:
-#	    The purpose of this program is to create the primary Spark driver application for the implementation of the
-#       Flint metagenomic profiling and analysis framework.  This script contains the the application's "main()"
-#       function and will define the data structures to be run in the cluster.
-#
-#
-#   NOTES:
-#   Please see the dependencies section below for the required libraries (if any).
-#
-#   DEPENDENCIES:
-#       • Apache-Spark
-#       • Python
-#       • Biopython
-#       • Boto3
-#       • Fabric
-#       • Pandas
-#
-#   You can check the python modules currently installed in your system by running: python -c "help('modules')"
-#
-#   USAGE:
-#       Run the program with the "--help" flag to see usage instructions.
-#
-#	AUTHOR:
-#           Camilo Valdes
-#           cvalde03@fiu.edu
-#           https://github.com/camilo-v
-#			Florida International University, FIU
-#           School of Computing and Information Sciences
-#           Bioinformatics Research Group, BioRG
-#           http://biorg.cs.fiu.edu/
-#
-#
-# ---------------------------------------------------------------------------------------------------------------------
 
 #   Spark Modules
 from pyspark import SparkConf, SparkContext
@@ -52,16 +13,12 @@ import argparse
 import time
 import json
 import csv
-import boto3
 import pandas as pd
 from datetime import timedelta
 import operator
 
 #   Flint Modules
-sys.path.append(os.path.join(os.path.dirname(__file__), 'modules'))
-import flint_utilities as utils
 import spark_jobs as sj
-import flint_bowtie2_mapping as bowtieUtils
 
 
 # -------------------------------------------------------- Main -------------------------------------------------------
@@ -76,8 +33,6 @@ def main(args):
     Returns:
 
     """
-    utils.printFlintPrettyHeader()
-
     # 	Pick up the command line arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("--samples", required=True, type=str, help="Manifest JSON file with sample particulars.")
@@ -192,17 +147,13 @@ def main(args):
     print("Annotations are in GTDB.txt")
     print("Trying Annotations....")
     try:
-        annotations_bucket  = annotations["bucket"]
-        annotations_path    = annotations["path"]
+        annotations_path = '/home/jasper/genome_clearinghouse/GTDB.index/annotations/annotations_GTDB_v89.txt'
 
     except KeyError as annot_key_error:
         print("[" + time.strftime('%d-%b-%Y %H:%M:%S', time.localtime()) + "] WARNING! Annotations Error. " +
               str(annot_key_error))
 
-    client = boto3.client('s3')
-    s3_obj = client.get_object(Bucket=annotations_bucket, Key=annotations_path)
-    annotations_file = s3_obj['Body'].read()
-    annotations_df = pd.read_csv(io.BytesIO(annotations_file), header=None, delimiter="\t")
+    annotations_df = pd.read_csv(annotations_path, header=None, delimiter="\t")
 
     for index, row in annotations_df.iterrows():
         taxonomic_id  = row[0]
@@ -232,36 +183,16 @@ def main(args):
             sample_type     = aSample['sample_type']
             print("sample format is:......")
             print(sample_format)
+            print("sampleID is:......")
+            print(sampleID)
 
         except KeyError as sample_requirements_key_error:
             print("[" + time.strftime('%d-%b-%Y %H:%M:%S', time.localtime()) +
                   "] [ERROR] ⚠️ Sample Requirements Error." + str(sample_requirements_key_error))
             exit(1)
 
-        try:
-            if sample_format.lower() != "fastq":
-                raise ValueError()
-        except (ValueError, IndexError):
-            print("[ERROR] ⚠️ Read Format Error. Only FASTQ-formatted read files are supported.")
-            exit(1)
-        #try:
-            #if sample_format.lower() != "tab5":
-                #raise ValueError()
-        #except (ValueError, IndexError):
-            #print("] [ERROR] ⚠️ Read Format Error. Only TAB5-formatted read files are supported.")
-            #exit(1)
 
-
-        try:
-            if sample_type.lower() not in ("single", "paired"):
-                raise ValueError()
-        except (ValueError, IndexError):
-            print("[" + time.strftime('%d-%b-%Y %H:%M:%S', time.localtime()) +
-                  "] [ERROR] ⚠️ Read Type Error. Only Paired or Single reads supported.")
-            exit(1)
-
-
-        # --------------------------------- Properties for Streaming from a Directory ---------------------------------
+    #     # --------------------------------- Properties for Streaming from a Directory ---------------------------------
         if use_streaming_dir:
             try:
                 batch_duration      = float(aSample["batch_duration"])  # In seconds.
@@ -277,22 +208,6 @@ def main(args):
             except KeyError as stream_dir_key_error:
                 print("[" + time.strftime('%d-%b-%Y %H:%M:%S', time.localtime()) +
                       "] [ERROR] ⚠️ Stream Directory Key Error. Missing: " + str(stream_dir_key_error))
-                exit(1)
-
-        # ----------------------------------- Properties for Streaming from Kinesis -----------------------------------
-        elif use_streaming_kinesis:
-            try:
-                batch_duration      = float(aSample["batch_duration"])  # In seconds.
-                app_name            = aSample["streaming_app_name"]
-                output_directory    = aSample["output_dir"]
-                stream_name         = aSample["stream_name"]
-                endpoint_url        = aSample["endpoint_url"]
-                region_name         = aSample["region_name"]
-                number_of_shards    = aSample["number_of_shards"]
-
-            except KeyError as stream_kinesis_key_error:
-                print("[" + time.strftime('%d-%b-%Y %H:%M:%S', time.localtime()) +
-                      "] [ERROR] ⚠️ Stream Kinesis Key Error. Missing: " + str(stream_kinesis_key_error))
                 exit(1)
 
 
@@ -333,6 +248,7 @@ def main(args):
 
         if save_to_local:
             local_output_directory = output_directory + "/" + sampleID
+            print(local_output_directory)
             if not os.path.exists(local_output_directory):
                 print("[" + time.strftime('%d-%b-%Y %H:%M:%S', time.localtime()) + "]" +
                       " Output directory does not exist. Creating...")
@@ -358,10 +274,10 @@ def main(args):
         #   Configuration parameters for a Spark run in an EMR cluster.
         conf = (SparkConf().setAppName(APP_NAME))
         conf.set("spark.default.parallelism", partition_size)
-        conf.set("spark.executor.memoryOverhead", "1G")
-        conf.set("conf spark.locality.wait", "3s")
-        conf.set("spark.network.timeout", "10000000")
-        conf.set("spark.executor.heartbeatInterval", "10000000")
+        # conf.set("spark.executor.memoryOverhead", "1G")
+        # conf.set("conf spark.locality.wait", "3s")
+        # conf.set("spark.network.timeout", "10000000")
+        # conf.set("spark.executor.heartbeatInterval", "10000000")
 
 
         print("[" + time.strftime('%d-%b-%Y %H:%M:%S', time.localtime()) + "] Batch Duration: " +
@@ -371,17 +287,17 @@ def main(args):
         #   Initialize the Spark context for this run.
         sc = SparkContext(conf=conf)
 
-        sc.addPyFile(os.path.join(os.path.dirname(__file__), 'modules/spark_jobs.py'))
-        sc.addPyFile(os.path.join(os.path.dirname(__file__), 'modules/flint_sample_downloads.py'))
-        sc.addPyFile(os.path.join(os.path.dirname(__file__), 'modules/flint_utilities.py'))
-        sc.addPyFile(os.path.join(os.path.dirname(__file__), 'modules/flint_bowtie2_mapping.py'))
+        sc.addPyFile(os.path.join(os.path.dirname(__file__), 'spark_jobs.py'))
+    #     sc.addPyFile(os.path.join(os.path.dirname(__file__), 'modules/flint_sample_downloads.py'))
+    #     sc.addPyFile(os.path.join(os.path.dirname(__file__), 'modules/flint_utilities.py'))
+    #     sc.addPyFile(os.path.join(os.path.dirname(__file__), 'modules/flint_bowtie2_mapping.py'))
 
-        #   Add the DNA mapping resources
-        sc.addFile(os.path.join(os.path.dirname(__file__), 'services/align_service.py'))
+    #     #   Add the DNA mapping resources
+    #     sc.addFile(os.path.join(os.path.dirname(__file__), 'services/align_service.py'))
 
-        #   Initialize the Spark Streaming context, this is the main entry point of all Spark Streaming
-        #   functionality.
-        ssc = StreamingContext(sc, batch_duration)
+    #     #   Initialize the Spark Streaming context, this is the main entry point of all Spark Streaming
+    #     #   functionality.
+        #ssc = StreamingContext(sc, batch_duration)
 
         # -------------------------------------- Stream from a Directory ----------------------------------------------
         if use_streaming_dir:
@@ -394,7 +310,7 @@ def main(args):
                                             save_to_s3=save_to_s3,
                                             save_to_local=save_to_local,
                                             partition_size=partition_size,
-                                            ssc=ssc,
+                                            sc=sc,
                                             sensitive_align=sensitive_align,
                                             annotations_dictionary=annotations_dictionary,
                                             s3_output_bucket=s3_output_bucket,
@@ -410,35 +326,6 @@ def main(args):
                 print(str(e))
 
  
-        # ---------------------------------- Stream from a Kinesis source ---------------------------------------------
-        if use_streaming_kinesis:
-            try:
-                sj.dispatch_stream_from_kinesis(sampleID=sampleID,
-                                                sample_format=sample_format,
-                                                output_file=output_file,
-                                                save_to_s3=save_to_s3,
-                                                save_to_local=save_to_local,
-                                                partition_size=partition_size,
-                                                ssc=ssc,
-                                                app_name=app_name,
-                                                stream_name=stream_name,
-                                                endpoint_url=endpoint_url,
-                                                region_name=region_name,
-                                                number_of_shards=number_of_shards,
-                                                streaming_timeout=streaming_timeout,
-                                                sensitive_align=sensitive_align,
-                                                annotations_dictionary=annotations_dictionary,
-                                                s3_output_bucket=s3_output_bucket,
-                                                verbose_output=verbose_output,
-                                                keep_shard_profiles=keep_shard_profiles,
-                                                coalesce_output=coalesce_output,
-                                                sample_type=sample_type,
-                                                debug_mode=debug_mode
-                                                )
-            except ValueError, e:
-                print(str(e))
-
-
         # -------------------------------------- Coalesced Output Reports ---------------------------------------------
         #
         #   Reports are written out to either an S3 bucket specified in the initial JSON config file, or to a
